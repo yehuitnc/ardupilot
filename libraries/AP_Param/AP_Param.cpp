@@ -33,6 +33,9 @@
 #include <StorageManager/StorageManager.h>
 #include <AP_BoardConfig/AP_BoardConfig.h>
 #include <stdio.h>
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    #include <SITL/SITL.h>
+#endif
 
 extern const AP_HAL::HAL &hal;
 
@@ -155,7 +158,7 @@ void AP_Param::erase_all(void)
 */
 uint32_t AP_Param::group_id(const struct GroupInfo *grpinfo, uint32_t base, uint8_t i, uint8_t shift)
 {
-    if (grpinfo[i].idx == 0 && shift != 0 && !(grpinfo[i].flags & AP_PARAM_NO_SHIFT)) {
+    if (grpinfo[i].idx == 0 && shift != 0 && !(grpinfo[i].flags & AP_PARAM_FLAG_NO_SHIFT)) {
         /*
           this is a special case for a bug in the original design. An
           idx of 0 shifted by n bits is still zero, which makes it
@@ -199,7 +202,7 @@ bool AP_Param::check_group_info(const struct AP_Param::GroupInfo *  group_info,
             return false;
         }
         if (group_shift != 0 && idx == 0) {
-            // great idx 0 as 63 for duplicates. See group_id()
+            // treat idx 0 as 63 for duplicates. See group_id()
             idx = 63;
         }
         if (used_mask & (1ULL<<idx)) {
@@ -909,6 +912,26 @@ AP_Param::find_by_index(uint16_t idx, enum ap_var_type *ptype, ParamToken *token
     return ap;    
 }
 
+// by-name equivalent of find_by_index()
+AP_Param* AP_Param::find_by_name(const char* name, enum ap_var_type *ptype, ParamToken *token)
+{
+    AP_Param *ap;
+    uint16_t count = 0;
+    for (ap = AP_Param::first(token, ptype);
+         ap && *ptype != AP_PARAM_GROUP && *ptype != AP_PARAM_NONE;
+         ap = AP_Param::next_scalar(token, ptype)) {
+        int32_t ret = strncasecmp(name, _var_info[token->key].name, AP_MAX_NAME_SIZE);
+        if (ret >= 0) {
+            char buf[AP_MAX_NAME_SIZE];
+            ap->copy_name_token(*token, buf, AP_MAX_NAME_SIZE);
+            if (strncasecmp(name, buf, AP_MAX_NAME_SIZE) == 0) {
+                break;
+            }
+        }
+        count++;
+    }
+    return ap;
+}
 
 /*
   Find a variable by pointer, returning key. This is used for loading pointer variables
@@ -1137,12 +1160,21 @@ void AP_Param::save_sync(bool force_save)
 */
 void AP_Param::save(bool force_save)
 {
-    struct param_save p;
+    struct param_save p, p2;
     p.param = this;
     p.force_save = force_save;
+    if (save_queue.peek(p2) &&
+        p2.param == this &&
+        p2.force_save == force_save) {
+        // this one is already at the head of the list to be
+        // saved. This check is cheap and catches the case where we
+        // are flooding the save queue with one parameter (eg. mission
+        // creation, changing MIS_TOTAL)
+        return;
+    }
     while (!save_queue.push(p)) {
         // if we can't save to the queue
-        if (hal.util->get_soft_armed()) {
+        if (hal.util->get_soft_armed() || !hal.scheduler->in_main_thread()) {
             // if we are armed then don't sleep, instead we lose the
             // parameter save
             return;
@@ -1465,6 +1497,9 @@ void AP_Param::reload_defaults_file(bool last_pass)
             AP_HAL::panic("Failed to load defaults from %s\n", default_file);
         }
     }
+#endif
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL && !defined(HAL_BUILD_AP_PERIPH)
+    hal.util->set_cmdline_parameters();
 #endif
 }
 
@@ -1979,6 +2014,16 @@ bool AP_Param::parse_param_line(char *line, char **vname, float &value, bool &re
     if (strlen(pname) > AP_MAX_NAME_SIZE) {
         return false;
     }
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    // Workaround to prevent FORMAT_VERSION in param file resulting in invalid
+    // EEPROM. For details, see: https://github.com/ArduPilot/ardupilot/issues/15579
+    if (strcmp(pname, "FORMAT_VERSION") == 0) {
+        ::printf("Warning: Ignoring FORMAT_VERSION in param file\n");
+        return false;
+    }
+#endif
+
     const char *value_s = strtok_r(nullptr, ", =\t\r\n", &saveptr);
     if (value_s == nullptr) {
         return false;
@@ -2556,7 +2601,7 @@ void AP_Param::show_all(AP_HAL::BetterStream *port, bool showKeyValues)
          ap;
          ap=AP_Param::next_scalar(&token, &type)) {
         if (showKeyValues) {
-            port->printf("Key %i: Index %i: GroupElement %i  :  ", token.key, token.idx, token.group_element);
+            port->printf("Key %u: Index %u: GroupElement %u  :  ", (unsigned)token.key, (unsigned)token.idx, (unsigned)token.group_element);
         }
         show(ap, token, type, port);
         hal.scheduler->delay(1);

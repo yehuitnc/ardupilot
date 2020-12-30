@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import time
+import string
 import subprocess
 import sys
 import gzip
@@ -84,7 +85,9 @@ class build_binaries(object):
                 time.sleep(0.1)
                 continue
             if running_python3:
-                x = x.decode('ascii')
+                x = bytearray(x)
+                x = filter(lambda x : chr(x) in string.printable, x)
+                x = "".join([chr(c) for c in x])
             output += x
             x = x.rstrip()
             if show_output:
@@ -386,7 +389,7 @@ is bob we will attempt to checkout bob-AVR'''
 
                 if self.skip_board_waf(board):
                     continue
-                
+
                 if os.path.exists(self.buildroot):
                     shutil.rmtree(self.buildroot)
 
@@ -567,6 +570,7 @@ is bob we will attempt to checkout bob-AVR'''
                 "KakuteF4",
                 "KakuteF7",
                 "KakuteF7Mini",
+                "MambaF405v2",
                 "MatekF405",
                 "MatekF405-STD",
                 "MatekF405-Wing",
@@ -600,6 +604,7 @@ is bob we will attempt to checkout bob-AVR'''
                 "mRoControlZeroF7",
                 "mRoNexus",
                 "mRoPixracerPro",
+                "mRoControlZeroOEMH7",
                 "F35Lightning",
                 "speedybeef4",
                 "SuccexF4",
@@ -614,6 +619,7 @@ is bob we will attempt to checkout bob-AVR'''
                 "CubeOrange",
                 "CubeYellow",
                 "R9Pilot",
+                "QioTekZealotF427",
                 # SITL targets
                 "SITL_x86_64_linux_gnu",
                 "SITL_arm_linux_gnueabihf",
@@ -628,8 +634,13 @@ is bob we will attempt to checkout bob-AVR'''
                 "f303-Universal",
                 "f303-M10025",
                 "f303-M10070",
+                "f303-MatekGPS",
+                "f103-Airspeed",
                 "CUAV_GPS",
                 "ZubaxGNSS",
+                "CubeOrange-periph",
+                "CubeBlack-periph",
+                "HitecMosaic",
                 ]
 
     def build_arducopter(self, tag):
@@ -695,7 +706,7 @@ is bob we will attempt to checkout bob-AVR'''
                            "AP_Periph",
                            "AP_Periph")
 
-        
+
     def generate_manifest(self):
         '''generate manigest files for GCS to download'''
         self.progress("Generating manifest")

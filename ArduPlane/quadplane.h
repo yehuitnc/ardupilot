@@ -11,6 +11,7 @@
 #include <AC_Avoidance/AC_Avoid.h>
 #include <AP_Proximity/AP_Proximity.h>
 #include "qautotune.h"
+#include "defines.h"
 
 /*
   QuadPlane specific functionality
@@ -24,9 +25,12 @@ public:
     friend class AP_AdvancedFailsafe_Plane;
     friend class QAutoTune;
     friend class AP_Arming_Plane;
+    friend class RC_Channel_Plane;
+    friend class RC_Channel;
 
     friend class Mode;
     friend class ModeAuto;
+    friend class ModeRTL;
     friend class ModeAvoidADSB;
     friend class ModeGuided;
     friend class ModeQHover;
@@ -79,8 +83,8 @@ public:
     /*
       return true if we are a tailsitter transitioning to VTOL flight
     */
-    bool in_tailsitter_vtol_transition(void) const;
-    
+    bool in_tailsitter_vtol_transition(uint32_t now = 0) const;
+
     bool handle_do_vtol_transition(enum MAV_VTOL_STATE state);
 
     bool do_vtol_takeoff(const AP_Mission::Mission_Command& cmd);
@@ -91,6 +95,7 @@ public:
     bool in_vtol_mode(void) const;
     bool in_vtol_posvel_mode(void) const;
     void update_throttle_hover();
+    bool show_vtol_view() const;
 
     // vtol help for is_flying()
     bool is_flying(void);
@@ -110,8 +115,11 @@ public:
     // return true when tailsitter frame configured
     bool is_tailsitter(void) const;
 
-    // return true when flying a control surface only tailsitter tailsitter
-    bool is_contol_surface_tailsitter(void) const;
+    // return true when flying a control surface only tailsitter
+    bool is_control_surface_tailsitter(void) const;
+
+    // true when flying a tilt-vectored tailsitter
+    bool _is_vectored;
 
     // return true when flying a tailsitter in VTOL
     bool tailsitter_active(void);
@@ -124,6 +132,9 @@ public:
     
     // check if we have completed transition to fixed wing
     bool tailsitter_transition_fw_complete(void);
+
+    // return true if we are a tailsitter in FW flight
+    bool is_tailsitter_in_fw_flight(void) const;
 
     // check if we have completed transition to vtol
     bool tailsitter_transition_vtol_complete(void) const;
@@ -154,6 +165,8 @@ public:
         int16_t  climb_rate;
         float    throttle_mix;
         float    speed_scaler;
+        uint8_t  transition_state;
+        uint8_t  assist;
     };
 
     MAV_TYPE get_mav_type(void) const;
@@ -188,6 +201,9 @@ private:
     // vertical acceleration the pilot may request
     AP_Int16 pilot_accel_z;
 
+     // air mode state: OFF, ON
+    AirMode air_mode;
+
     // check for quadplane assistance needed
     bool assistance_needed(float aspeed, bool have_airspeed);
 
@@ -215,11 +231,17 @@ private:
     // get desired climb rate in cm/s
     float get_pilot_desired_climb_rate_cms(void) const;
 
+    // get pilot lean angle
+    void get_pilot_desired_lean_angles(float &roll_out_cd, float &pitch_out_cd, float angle_max_cd, float angle_limit_cd) const;
+
     // initialise throttle_wait when entering mode
     void init_throttle_wait();
 
     // use multicopter rate controller
     void multicopter_attitude_rate_update(float yaw_rate_cds);
+
+    // update yaw target for tiltrotor transition
+    void update_yaw_target();
     
     // main entry points for VTOL flight modes
     void init_stabilize(void);
@@ -231,6 +253,8 @@ private:
     void control_qacro(void);
     void init_hover(void);
     void control_hover(void);
+    void relax_attitude_control();
+
 
     void init_loiter(void);
     void init_qland(void);
@@ -464,6 +488,9 @@ private:
         float current_tilt;
         float current_throttle;
         bool motors_active:1;
+        float transition_yaw_cd;
+        uint32_t transition_yaw_set_ms;
+        bool is_vectored;
     } tilt;
 
     // bit 0 enables plane mode and bit 1 enables body-frame roll mode
@@ -480,9 +507,10 @@ private:
     };
 
     enum tailsitter_gscl_mask {
-        TAILSITTER_GSCL_BOOST   = (1U<<0),
+        TAILSITTER_GSCL_THROTTLE = (1U<<0),
         TAILSITTER_GSCL_ATT_THR = (1U<<1),
-        TAILSITTER_GSCL_INTERP  = (1U<<2),
+        TAILSITTER_GSCL_DISK_THEORY = (1U<<2),
+        TAILSITTER_GSCL_ALTITUDE = (1U<<3),
     };
 
     // tailsitter control variables
@@ -501,10 +529,12 @@ private:
         AP_Float scaling_speed_min;
         AP_Float scaling_speed_max;
         AP_Int16 gain_scaling_mask;
+        AP_Float disk_loading;
     } tailsitter;
 
     // tailsitter speed scaler
-    float last_spd_scaler = 1.0f;
+    float last_spd_scaler = 1.0f; // used to slew rate limiting with TAILSITTER_GSCL_ATT_THR option
+    float log_spd_scaler; // for QTUN log
 
     // the attitude view of the VTOL attitude controller
     AP_AHRS_View *ahrs_view;
@@ -526,8 +556,7 @@ private:
     void tiltrotor_binary_update(void);
     void tiltrotor_vectored_yaw(void);
     void tiltrotor_bicopter(void);
-    void tilt_compensate_up(float *thrust, uint8_t num_motors);
-    void tilt_compensate_down(float *thrust, uint8_t num_motors);
+    void tilt_compensate_angle(float *thrust, uint8_t num_motors, float non_tilted_mul, float tilted_mul);
     void tilt_compensate(float *thrust, uint8_t num_motors);
     bool is_motor_tilting(uint8_t motor) const {
         return (((uint8_t)tilt.tilt_mask.get()) & (1U<<motor));
@@ -556,6 +585,11 @@ private:
         OPTION_IDLE_GOV_MANUAL=(1<<6),
         OPTION_Q_ASSIST_FORCE_ENABLE=(1<<7),
         OPTION_TAILSIT_Q_ASSIST_MOTORS_ONLY=(1<<8),
+        OPTION_AIRMODE=(1<<9),
+        OPTION_DISARMED_TILT=(1<<10),
+        OPTION_DELAY_ARMING=(1<<11),
+        OPTION_DISABLE_SYNTHETIC_AIRSPEED_ASSIST=(1<<12),
+        OPTION_DISABLE_GROUND_EFFECT_COMP=(1<<13),
     };
 
     AP_Float takeoff_failure_scalar;
@@ -564,6 +598,11 @@ private:
     uint32_t takeoff_time_limit_ms;
 
     float last_land_final_agl;
+
+
+    // oneshot with duration ARMING_DELAY_MS used by quadplane to delay spoolup after arming:
+    // ignored unless OPTION_DELAY_ARMING or OPTION_TILT_DISARMED is set
+    bool delay_arming;
 
     /*
       return true if current mission item is a vtol takeoff

@@ -28,6 +28,13 @@ public:
         k_param_hardpoint_rate,
         k_param_baro_enable,
         k_param_esc_number,
+        k_param_battery,
+        k_param_debug,
+        k_param_serial_number,
+        k_param_adsb_port,
+        k_param_servo_channels,
+        k_param_rangefinder_port,
+        k_param_gps_port,
     };
 
     AP_Int16 format_version;
@@ -48,10 +55,12 @@ public:
 
 #ifdef HAL_PERIPH_ENABLE_RANGEFINDER
     AP_Int32 rangefinder_baud;
+    AP_Int8 rangefinder_port;
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_ADSB
     AP_Int32 adsb_baudrate;
+    AP_Int8 adsb_port;
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_PWM_HARDPOINT
@@ -62,7 +71,15 @@ public:
 #ifdef HAL_PERIPH_ENABLE_HWESC
     AP_Int8 esc_number;
 #endif
-    
+
+#ifdef HAL_PERIPH_ENABLE_GPS
+    AP_Int8 gps_port;
+#endif
+
+    AP_Int8 debug;
+
+    AP_Int32 serial_number;
+
     Parameters() {}
 };
 

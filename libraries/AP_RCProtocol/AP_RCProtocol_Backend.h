@@ -28,6 +28,7 @@ public:
     virtual ~AP_RCProtocol_Backend() {}
     virtual void process_pulse(uint32_t width_s0, uint32_t width_s1) {}
     virtual void process_byte(uint8_t byte, uint32_t baudrate) {}
+    virtual void process_handshake(uint32_t baudrate) {}
     uint16_t read(uint8_t chan);
     void read(uint16_t *pwm, uint8_t n);
     bool new_input();
@@ -48,9 +49,18 @@ public:
         return rc_frame_count;
     }
 
+    // reset valid rc frame count
+    void reset_rc_frame_count(void) {
+        rc_frame_count = 0;
+    }
+
     // get number of frames, honoring failsafe
     uint32_t get_rc_input_count(void) const {
         return rc_input_count;
+    }
+
+    uint32_t get_rc_protocols_mask(void) const {
+        return frontend.rc_protocols_mask;
     }
 
     // get RSSI
@@ -75,8 +85,7 @@ public:
     }
     
 protected:
-    struct Channels11Bit {
-        // 176 bits of data (11 bits per channel * 16 channels) = 22 bytes.
+    struct Channels11Bit_8Chan {
 #if __BYTE_ORDER != __LITTLE_ENDIAN
 #error "Only supported on little-endian architectures"
 #endif
@@ -88,14 +97,6 @@ protected:
         uint32_t ch5 : 11;
         uint32_t ch6 : 11;
         uint32_t ch7 : 11;
-        uint32_t ch8 : 11;
-        uint32_t ch9 : 11;
-        uint32_t ch10 : 11;
-        uint32_t ch11 : 11;
-        uint32_t ch12 : 11;
-        uint32_t ch13 : 11;
-        uint32_t ch14 : 11;
-        uint32_t ch15 : 11;
     } PACKED;
 
     void add_input(uint8_t num_channels, uint16_t *values, bool in_failsafe, int16_t rssi=-1);
